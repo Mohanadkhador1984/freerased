@@ -19,10 +19,15 @@ try:
     MERCHANT_ID = int(merchant_id_str) if merchant_id_str else None
 except ValueError:
     MERCHANT_ID = None
+
 MERCHANT_PHONE = os.getenv("MERCHANT_PHONE", "غير محدد")
+MERCHANT_QR = os.getenv("MERCHANT_QR", None)
 
 # لوحات الأزرار
-customer_keyboard = ReplyKeyboardMarkup([["➕ طلب تحويل"]], resize_keyboard=True)
+customer_keyboard = ReplyKeyboardMarkup(
+    [["➕ طلب تحويل", "📷 باركود شام كاش"]],
+    resize_keyboard=True
+)
 merchant_keyboard = ReplyKeyboardMarkup([["📋 الطلبات الجديدة"]], resize_keyboard=True)
 
 # مولّد أرقام طلبات
@@ -34,6 +39,7 @@ merchant_final_msg_id: Dict[int, int] = {}
 customer_conversations: Dict[tuple, List[int]] = {}
 merchant_temp_msgs: Dict[int, List[int]] = {}
 
+# ----------------- أدوات مساعدة -----------------
 def is_merchant(uid: int) -> bool:
     return MERCHANT_ID is not None and uid == MERCHANT_ID
 
@@ -67,7 +73,7 @@ def order_summary(order_id: int, order: Dict[str, Any]) -> str:
     status = badge_status(order)
     notice = ""
     if order.get("notify_msg"):
-        notice = "\n\n📥 إشعار الدفع تمت إضافته."
+        notice = "\n\n📥 إشعار الدفع موجود."
     return (
         f"📩 ملخص الطلب\n"
         f"{order_header(order_id, order)}\n"
@@ -104,6 +110,7 @@ def final_report_text(order_id: int, order: Dict[str, Any]) -> str:
 def make_initial_keyboard(order_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
+            [InlineKeyboardButton("📲 تأكيد تحويل سيريتل كاش", callback_data=f"confirm_syriatel:{order_id}")],
             [InlineKeyboardButton("📥 إدخال إشعار الدفع", callback_data=f"awaitmsg:{order_id}")],
             [InlineKeyboardButton("💳 تبديل حالة الدفع", callback_data=f"togglepay:{order_id}")],
             [
@@ -137,7 +144,7 @@ async def delete_conversation_messages(context: ContextTypes.DEFAULT_TYPE, chat_
             logger.debug(f"Failed to delete message {mid} in chat {chat_id}: {e}")
     customer_conversations[key] = []
 
-# بدء
+# ----------------- Handlers -----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if is_merchant(user.id):
@@ -152,7 +159,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=customer_keyboard,
         )
 
-# استقبال النصوص
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = (update.message.text or "").strip()
@@ -161,9 +167,13 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_merchant(user.id):
         if text == "➕ طلب تحويل":
             context.user_data["awaiting_phone"] = True
-            context.user_data.pop("awaiting_amount", None)
-            context.user_data.pop("phone", None)
-            return await update.message.reply_text("📱 أدخل رقم الهاتف:")
+            return await update.message.reply_text("📱 أدخل رقم الهاتف الذي تريد استلام الرصيد عليه:")
+
+        if text == "📷 باركود شام كاش":
+            if MERCHANT_QR:
+                return await update.message.reply_text(f"🔗 باركود شام كاش للتاجر:\n{MERCHANT_QR}")
+            else:
+                return await update.message.reply_text("⚠️ لا يوجد باركود مسجل حالياً.")
 
         if context.user_data.get("awaiting_phone"):
             context.user_data["phone"] = text
@@ -172,7 +182,15 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await update.message.reply_text("💰 أدخل المبلغ:")
 
         if context.user_data.get("awaiting_amount"):
-            phone, amount = context.user_data.get("phone"), text
+            context.user_data["amount"] = text
+            context.user_data["awaiting_amount"] = False
+            context.user_data["awaiting_notify"] = True
+            return await update.message.reply_text("📥 أرسل الآن إشعار الدفع أو رقم عملية التحويل من شام كاش:")
+
+        if context.user_data.get("awaiting_notify"):
+            phone = context.user_data.get("phone")
+            amount = context.user_data.get("amount")
+            notify_msg = text
             context.user_data.clear()
 
             order_id = next(_order_id_counter)
@@ -183,12 +201,13 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "phone": phone,
                 "amount": amount,
                 "status": "new",
-                "paid": False,
-                "notify_msg": None,
+                "paid": True,  # بما أنه أرسل إشعار الدفع
+                "notify_msg": notify_msg,
                 "final_msg_id": None,
             }
             ORDERS[order_id] = order
 
+            # إرسال الطلب للتاجر
             if MERCHANT_ID:
                 sent = await update.get_bot().send_message(
                     chat_id=MERCHANT_ID,
@@ -199,18 +218,18 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 order["final_msg_id"] = sent.message_id
                 merchant_temp_msgs[order_id] = []
 
+            # إشعار للزبون
             ack = await update.message.reply_text(f"✅ تم إرسال طلبك\nرقم الطلب: #{order_id}")
             customer_conversations.setdefault((user.id, order_id), []).append(ack.message_id)
         return
 
-        # التاجر
+    # التاجر
     if is_merchant(user.id):
         # في حال انتظار إدخال إشعار دفع
         if context.user_data.get("awaiting_msg_for"):
             oid = context.user_data.pop("awaiting_msg_for")
             if oid in ORDERS:
                 ORDERS[oid]["notify_msg"] = text
-                # سجل هذه الرسالة كرسالة مؤقتة ليتم حذفها لاحقًا
                 merchant_temp_msgs.setdefault(oid, []).append(update.message.message_id)
 
                 ref_msg_id = merchant_final_msg_id.get(oid)
@@ -223,8 +242,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         reply_markup=make_initial_keyboard(oid),
                     )
             return
-
-
 
         if text == "📋 الطلبات الجديدة":
             return await show_orders(update, context)
@@ -296,7 +313,7 @@ async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # togglepay: تبديل حالة الدفع قبل التنفيذ
+    # togglepay: تبديل حالة الدفع
     if action == "togglepay":
         if order.get("status") != "new":
             return await query.edit_message_text(final_report_text(order_id, order))
@@ -309,7 +326,34 @@ async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # تنفيذ الطلب
+    # confirm_syriatel: تأكيد تحويل سيريتل كاش
+    if action == "confirm_syriatel":
+        order["status"] = "done"
+        await delete_conversation_messages(context, chat_id=customer_id, order_id=order_id)
+
+        await context.bot.send_message(
+            chat_id=customer_id,
+            text=(
+                f"✅ تم تحويل رصيد سيريتل كاش\n"
+                f"📱 الرقم: {order.get('phone')}\n"
+                f"💰 المبلغ: {order.get('amount')}\n"
+                f"شكراً لاستخدامك خدمتنا."
+            ),
+        )
+
+        final_text = "🟢 ✅ تم التنفيذ (تحويل سيريتل كاش)\n\n" + final_report_text(order_id, order)
+        await context.bot.edit_message_text(
+            chat_id=MERCHANT_ID,
+            message_id=ref_msg_id,
+            text=final_text,
+        )
+
+        await cleanup_temp(context, order_id)
+        merchant_final_msg_id[order_id] = ref_msg_id
+        order["final_msg_id"] = ref_msg_id
+        return
+
+    # تنفيذ الطلب (عام)
     if action == "done":
         order["status"] = "done"
         await delete_conversation_messages(context, chat_id=customer_id, order_id=order_id)
@@ -373,6 +417,10 @@ async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "paidnow":
         if order.get("status") != "done":
             return await query.edit_message_text("⚠️ لا يمكن تحديد الدفع الآن قبل التنفيذ.")
+            # دفع لاحقًا
+    if action == "paidnow":
+        if order.get("status") != "done":
+            return await query.edit_message_text("⚠️ لا يمكن تحديد الدفع الآن قبل التنفيذ.")
         if order.get("paid"):
             return await context.bot.edit_message_text(
                 chat_id=MERCHANT_ID,
@@ -398,4 +446,5 @@ async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order["final_msg_id"] = ref_msg_id
         return
 
+    # أمر غير معروف
     await query.edit_message_text("⚠️ أمر غير معروف")
