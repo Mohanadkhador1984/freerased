@@ -5,7 +5,6 @@ from typing import Dict, Any, List, Tuple
 
 logger = logging.getLogger(__name__)
 
-# بيئة
 MERCHANT_ID_STR = os.getenv("MERCHANT_ID")
 try:
     MERCHANT_ID = int(MERCHANT_ID_STR) if MERCHANT_ID_STR else None
@@ -18,7 +17,7 @@ MERCHANT_QR = os.getenv("MERCHANT_QR", None)
 # مولد أرقام الطلبات
 _order_id_counter = itertools.count(1001)
 
-# قاعدة بيانات بسيطة داخل الذاكرة
+# قاعدة بيانات مؤقتة بالذاكرة
 ORDERS: Dict[int, Dict[str, Any]] = {}
 merchant_final_msg_id: Dict[int, int] = {}
 customer_conversations: Dict[tuple, List[int]] = {}
@@ -55,19 +54,22 @@ def order_summary(order_id: int, order: Dict[str, Any]) -> str:
     paid_status = fmt_paid(order.get("paid", False))
     amount_str = str(order.get("amount", 0))
     status = badge_status(order)
-    notice = ""
+    lines = [
+        "📩 ملخص الطلب",
+        order_header(order_id, order),
+        status,
+        "",
+        f"👤 الاسم: {order.get('name', '-')}",
+        f"📱 الرقم: {order.get('phone', '-')}",
+        f"🟡 الشبكة: {order.get('network', '-')}",
+        f"💰 المبلغ: {amount_str}",
+        f"💳 حالة الدفع: {paid_status}",
+    ]
     if order.get("notify_msg"):
-        notice = "\n\n📥 إشعار الدفع موجود."
-    return (
-        f"📩 ملخص الطلب\n"
-        f"{order_header(order_id, order)}\n"
-        f"{status}\n\n"
-        f"👤 الاسم: {order.get('name', '-')}\n"
-        f"📱 الرقم: {order.get('phone', '-')}\n"
-        f"💰 المبلغ: {amount_str}\n"
-        f"💳 حالة الدفع: {paid_status}"
-        f"{notice}"
-    )
+        lines.append(f"📥 إشعار الدفع: موجود")
+    if order.get("transaction_id"):
+        lines.append(f"🔢 رقم العملية: {order.get('transaction_id')}")
+    return "\n".join(lines)
 
 def final_report_text(order_id: int, order: Dict[str, Any]) -> str:
     paid = order.get("paid", False)
@@ -77,19 +79,27 @@ def final_report_text(order_id: int, order: Dict[str, Any]) -> str:
     notify_line = "🚫 لا يوجد"
     if order.get("notify_msg"):
         notify_line = "✅ أُرسل"
-    return (
-        f"📊 التقرير النهائي\n"
-        f"{order_header(order_id, order)}\n"
-        f"{status}\n\n"
-        f"👤 الاسم: {order.get('name', '-')}\n"
-        f"📱 الرقم: {order.get('phone', '-')}\n"
-        f"💰 المبلغ المطلوب: {amount}\n"
-        f"➕ الزيادة: {extra}\n"
-        f"💵 الصافي المطلوب: {net_amount}\n"
-        f"💳 حالة الدفع: {paid_status}\n"
-        f"📥 إشعار الدفع: {notify_line}"
-        + (f"\n\n🧾 نص الإشعار:\n{order['notify_msg']}" if order.get("notify_msg") else "")
-    )
+
+    lines = [
+        "📊 التقرير النهائي",
+        order_header(order_id, order),
+        status,
+        "",
+        f"👤 الاسم: {order.get('name', '-')}",
+        f"📱 الرقم: {order.get('phone', '-')}",
+        f"🟡 الشبكة: {order.get('network', '-')}",
+        f"💰 المبلغ المطلوب: {amount}",
+        f"➕ الزيادة: {extra}",
+        f"💵 الصافي المطلوب: {net_amount}",
+        f"💳 حالة الدفع: {paid_status}",
+        f"📥 إشعار الدفع: {notify_line}",
+    ]
+    if order.get("transaction_id"):
+        lines.append(f"🔢 رقم العملية: {order['transaction_id']}")
+    if order.get("notify_msg"):
+        lines.append("\n🧾 نص الإشعار:")
+        lines.append(order["notify_msg"])
+    return "\n".join(lines)
 
 def next_order_id() -> int:
     return next(_order_id_counter)

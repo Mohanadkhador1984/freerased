@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List
+from typing import List
 
 from telegram import (
     Update,
@@ -38,9 +38,11 @@ merchant_keyboard = ReplyKeyboardMarkup([["📋 الطلبات الجديدة"]]
 def make_initial_keyboard(order_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("📲 تأكيد تحويل سيريتل كاش", callback_data=f"confirm_syriatel:{order_id}")],
-            [InlineKeyboardButton("📥 إدخال إشعار الدفع", callback_data=f"awaitmsg:{order_id}")],
+            [InlineKeyboardButton("🧾 مطابقة الإشعار", callback_data=f"match:{order_id}")],
+            [InlineKeyboardButton("📥 إدخال/تعديل إشعار الدفع", callback_data=f"awaitmsg:{order_id}")],
+            [InlineKeyboardButton("🔢 إدخال/تعديل رقم العملية", callback_data=f"awaittrx:{order_id}")],
             [InlineKeyboardButton("💳 تبديل حالة الدفع", callback_data=f"togglepay:{order_id}")],
+            [InlineKeyboardButton("📲 تأكيد تحويل سيريتل كاش", callback_data=f"confirm_syriatel:{order_id}")],
             [
                 InlineKeyboardButton("✅ تنفيذ", callback_data=f"done:{order_id}"),
                 InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel:{order_id}"),
@@ -96,7 +98,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.clear()
             context.user_data["flow"] = "order"
             context.user_data["awaiting_phone"] = True
-            msg = await update.message.reply_text("📱 أدخل رقم الهاتف الذي تريد استلام الرصيد عليه:")
+            await update.message.reply_text("📱 أدخل رقم الهاتف الذي تريد استلام الرصيد عليه:")
             return
 
         if text == "📷 باركود شام كاش":
@@ -105,7 +107,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 return await update.message.reply_text("⚠️ لا يوجد باركود مسجل حالياً.")
 
-        # متابعة التدفق
+        # متابعة تدفق الطلب
         if context.user_data.get("flow") == "order":
             if context.user_data.get("awaiting_phone"):
                 phone = text
@@ -113,6 +115,19 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return await update.message.reply_text("⚠️ رقم غير صالح. أعد إدخال الرقم.")
                 context.user_data["phone"] = phone
                 context.user_data["awaiting_phone"] = False
+                context.user_data["awaiting_network"] = True
+                return await update.message.reply_text("🟡 اختر الشبكة: اكتب سيريتل أو MTN")
+
+            if context.user_data.get("awaiting_network"):
+                net = text.strip().lower()
+                if net in ["سيريتل", "سيرياتيل", "syriatel", "syria tel", "س"]:
+                    network = "Syriatel"
+                elif net in ["mtn", "ام تي ان", "إم تي إن", "MTN"]:
+                    network = "MTN"
+                else:
+                    return await update.message.reply_text("⚠️ اكتب سيريتل أو MTN فقط.")
+                context.user_data["network"] = network
+                context.user_data["awaiting_network"] = False
                 context.user_data["awaiting_amount"] = True
                 return await update.message.reply_text("💰 أدخل المبلغ المطلوب:")
 
@@ -123,12 +138,25 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data["amount"] = amount_text
                 context.user_data["awaiting_amount"] = False
                 context.user_data["awaiting_notify"] = True
-                return await update.message.reply_text("📥 أرسل الآن إشعار الدفع/رمز العملية من شام كاش:")
+                return await update.message.reply_text("📥 أرسل الآن نص إشعار الدفع من شام كاش:")
 
             if context.user_data.get("awaiting_notify"):
+                notify_msg = text
+                if len(notify_msg) < 6:
+                    return await update.message.reply_text("⚠️ إشعار قصير. أرسل نص الإشعار كما ظهر لك في شام كاش.")
+                context.user_data["notify_msg"] = notify_msg
+                context.user_data["awaiting_notify"] = False
+                context.user_data["awaiting_trx"] = True
+                return await update.message.reply_text("🔢 أرسل رقم عملية شام كاش (Transaction ID):")
+
+            if context.user_data.get("awaiting_trx"):
+                trx = text.strip().replace(" ", "")
+                if not trx.isdigit() or len(trx) < 6:
+                    return await update.message.reply_text("⚠️ رقم عملية غير صالح. أعد إرسال رقم العملية (أرقام فقط).")
                 phone = context.user_data.get("phone")
                 amount = context.user_data.get("amount")
-                notify_msg = text
+                network = context.user_data.get("network")
+                notify_msg = context.user_data.get("notify_msg")
                 context.user_data.clear()
 
                 order_id = next_order_id()
@@ -137,10 +165,12 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "customer_id": user.id,
                     "name": user.full_name,
                     "phone": phone,
+                    "network": network,
                     "amount": amount,
                     "status": "new",
-                    "paid": True,  # لأنه أرسل إشعار الدفع
+                    "paid": True,  # أرسل إشعار ورقم عملية
                     "notify_msg": notify_msg,
+                    "transaction_id": trx,
                     "final_msg_id": None,
                 }
                 ORDERS[order_id] = order
@@ -156,14 +186,22 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     order["final_msg_id"] = sent.message_id
                     merchant_temp_msgs[order_id] = []
 
-                ack = await update.message.reply_text(f"✅ تم إرسال طلبك\nرقم الطلب: #{order_id}")
+                ack_lines = [
+                    "✅ تم إرسال طلبك",
+                    f"رقم الطلب: #{order_id}",
+                    f"📱 الرقم: {order['phone']}",
+                    f"🟡 الشبكة: {order['network']}",
+                    f"💰 المبلغ: {order['amount']}",
+                    f"🔢 رقم العملية: {trx}",
+                ]
+                ack = await update.message.reply_text("\n".join(ack_lines))
                 customer_conversations.setdefault((user.id, order_id), []).append(ack.message_id)
                 return
         return
 
     # التاجر
     if is_merchant(user.id):
-        # حالة إدخال إشعار دفع
+        # انتظار إدخال إشعار دفع
         if context.user_data.get("awaiting_msg_for"):
             oid = context.user_data.pop("awaiting_msg_for")
             if oid in ORDERS:
@@ -171,11 +209,33 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 merchant_temp_msgs.setdefault(oid, []).append(update.message.message_id)
                 ref_msg_id = merchant_final_msg_id.get(oid)
                 if ref_msg_id:
-                    summary_with_notice = order_summary(oid, ORDERS[oid]) + "\n\n📥 تم استلام إشعار الدفع."
+                    summary = order_summary(oid, ORDERS[oid])
                     await update.get_bot().edit_message_text(
                         chat_id=MERCHANT_ID,
                         message_id=ref_msg_id,
-                        text=summary_with_notice,
+                        text=summary,
+                        reply_markup=make_initial_keyboard(oid),
+                    )
+            return
+
+        # انتظار إدخال/تعديل رقم العملية
+        if context.user_data.get("awaiting_trx_for"):
+            oid = context.user_data.pop("awaiting_trx_for")
+            trx = text.strip().replace(" ", "")
+            if not trx.isdigit() or len(trx) < 6:
+                await update.message.reply_text("⚠️ رقم عملية غير صالح. أرسل أرقام فقط (6+ خانات).")
+                context.user_data["awaiting_trx_for"] = oid
+                return
+            if oid in ORDERS:
+                ORDERS[oid]["transaction_id"] = trx
+                merchant_temp_msgs.setdefault(oid, []).append(update.message.message_id)
+                ref_msg_id = merchant_final_msg_id.get(oid)
+                if ref_msg_id:
+                    summary = order_summary(oid, ORDERS[oid])
+                    await update.get_bot().edit_message_text(
+                        chat_id=MERCHANT_ID,
+                        message_id=ref_msg_id,
+                        text=summary,
                         reply_markup=make_initial_keyboard(oid),
                     )
             return
@@ -197,6 +257,7 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"\n{order_header(oid, order)}\n"
                 f"👤 {order.get('name')}\n"
                 f"📱 {order.get('phone')}\n"
+                f"🟡 {order.get('network')}\n"
                 f"💰 {order.get('amount')}\n"
                 f"💳 {fmt_paid(order.get('paid', False))}"
             )
@@ -234,10 +295,29 @@ async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     customer_id = order["customer_id"]
     ref_msg_id = merchant_final_msg_id.get(order_id, query.message.message_id)
 
-    # awaitmsg
+    # مطالبة التاجر بالمطابقة اليدوية
+    if action == "match":
+        tips = [
+            "🧾 التحقق اليدوي (مطابقة الإشعار):",
+            "1) تأكد أن اسم المرسل في إشعار شام كاش مطابق للمشترك المعروف لديك.",
+            "2) تأكد من رقم الهاتف أو آخر 4 أرقام إن وجدت.",
+            f"3) المبلغ في الإشعار يساوي المطلوب: {order.get('amount')}.",
+            f"4) رقم العملية يطابق المدخل: {order.get('transaction_id','غير مدخل')}.",
+            "5) وقت العملية ضمن فترة مقبولة.",
+            "بعد التأكد يمكنك الضغط على ✅ تنفيذ أو 📲 تأكيد تحويل سيريتل كاش.",
+        ]
+        await context.bot.edit_message_text(
+            chat_id=MERCHANT_ID,
+            message_id=ref_msg_id,
+            text=order_summary(order_id, order) + "\n\n" + "\n".join(tips),
+            reply_markup=make_initial_keyboard(order_id),
+        )
+        return
+
+    # إدخال/تعديل إشعار الدفع
     if action == "awaitmsg":
         context.user_data["awaiting_msg_for"] = order_id
-        prompt_text = order_summary(order_id, order) + "\n\n📥 أرسل الآن إشعار الدفع هنا كرسالة نصية:"
+        prompt_text = order_summary(order_id, order) + "\n\n📥 أرسل الآن نص إشعار الدفع هنا:"
         await context.bot.edit_message_text(
             chat_id=MERCHANT_ID,
             message_id=ref_msg_id,
@@ -246,7 +326,19 @@ async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # togglepay
+    # إدخال/تعديل رقم العملية
+    if action == "awaittrx":
+        context.user_data["awaiting_trx_for"] = order_id
+        prompt_text = order_summary(order_id, order) + "\n\n🔢 أرسل الآن رقم عملية شام كاش هنا (أرقام فقط):"
+        await context.bot.edit_message_text(
+            chat_id=MERCHANT_ID,
+            message_id=ref_msg_id,
+            text=prompt_text,
+            reply_markup=make_initial_keyboard(order_id),
+        )
+        return
+
+    # تبديل حالة الدفع
     if action == "togglepay":
         if order.get("status") != "new":
             return await query.edit_message_text(final_report_text(order_id, order))
@@ -261,6 +353,9 @@ async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # تأكيد سيريتل كاش
     if action == "confirm_syriatel":
+        # بإمكانك فرض شرط وجود transaction_id قبل التأكيد
+        # if not order.get("transaction_id"):
+        #     return await query.edit_message_text("⚠️ أدخل رقم العملية أولاً قبل التأكيد.")
         order["status"] = "done"
         try:
             await delete_conversation_messages(context, chat_id=customer_id, order_id=order_id)
@@ -302,6 +397,7 @@ async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg_to_customer = (
             f"✅ تم تنفيذ طلبك #{order_id}\n"
             f"📱 الرقم: {order.get('phone')}\n"
+            f"🟡 الشبكة: {order.get('network')}\n"
             f"💳 حالة الدفع: {paid_status}\n"
             f"💰 المبلغ: {amount}\n"
             f"➕ الزيادة: {extra}\n"
@@ -309,6 +405,8 @@ async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if order.get("notify_msg"):
             msg_to_customer += f"\n\n📥 إشعار الدفع:\n{order['notify_msg']}"
+        if order.get("transaction_id"):
+            msg_to_customer += f"\n🔢 رقم العملية: {order['transaction_id']}"
         await context.bot.send_message(chat_id=customer_id, text=msg_to_customer)
 
         report = final_report_text(order_id, order)

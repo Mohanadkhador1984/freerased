@@ -9,7 +9,6 @@ load_dotenv(dotenv_path=dotenv_path)
 if __name__ == "__main__":
     app = build_app()
 
-    # إذا أردت Polling محلياً:
     if os.getenv("USE_POLLING", "0") == "1":
         print("🚀 تشغيل البوت عبر polling...")
         app.run_polling(allowed_updates=["message", "callback_query"])
