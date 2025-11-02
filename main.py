@@ -10,12 +10,12 @@ if __name__ == "__main__":
     app = build_app()
 
     if os.getenv("USE_POLLING", "0") == "1":
-        print("🚀 تشغيل البوت عبر polling...")
+        print("🚀 تشغيل البوت محليًا عبر polling...")
         app.run_polling(allowed_updates=["message", "callback_query"])
     else:
         token = os.getenv("BOT_TOKEN")
         port = int(os.environ.get("PORT", 5000))
-        base_url = os.environ.get("PUBLIC_URL", "https://telegram-bot-abho.onrender.com")
+        base_url = os.environ.get("PUBLIC_URL")
         url = f"{base_url}/{token}"
 
         print(f"🚀 البوت شغال عبر Webhook... {url}")
