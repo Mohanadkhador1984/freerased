@@ -1,105 +1,45 @@
-import os
-import itertools
-import logging
-from typing import Dict, Any, List, Tuple
+import re
 
-logger = logging.getLogger(__name__)
+def is_valid_phone(phone: str) -> bool:
+    return bool(re.fullmatch(r"^09\d{8}$", phone.strip()))
 
-MERCHANT_ID_STR = os.getenv("MERCHANT_ID")
-try:
-    MERCHANT_ID = int(MERCHANT_ID_STR) if MERCHANT_ID_STR else None
-except ValueError:
-    MERCHANT_ID = None
-
-MERCHANT_PHONE = os.getenv("MERCHANT_PHONE", "غير محدد")
-MERCHANT_QR = os.getenv("MERCHANT_QR", None)
-
-# مولد أرقام الطلبات
-_order_id_counter = itertools.count(1001)
-
-# قاعدة بيانات مؤقتة بالذاكرة
-ORDERS: Dict[int, Dict[str, Any]] = {}
-merchant_final_msg_id: Dict[int, int] = {}
-customer_conversations: Dict[tuple, List[int]] = {}
-merchant_temp_msgs: Dict[int, List[int]] = {}
-
-def is_merchant(uid: int) -> bool:
-    return MERCHANT_ID is not None and uid == MERCHANT_ID
-
-def fmt_paid(paid: bool) -> str:
-    return "✅ مدفوع" if paid else "⏳ غير مدفوع"
-
-def calc_extra_and_net(amount_str: str) -> Tuple[int, int, int]:
-    try:
-        amount = int(str(amount_str).strip())
-    except Exception:
-        amount = 0
+def calc_extra_and_net(amount: int):
     extra = (amount // 1000) * 200
-    net_amount = amount + extra
-    return amount, extra, net_amount
+    return amount, extra, amount + extra
 
-def badge_status(order: Dict[str, Any]) -> str:
-    if order.get("status") == "new":
-        return "🟦 جديد"
-    if order.get("status") == "done":
-        return "🟢 منفّذ" if order.get("paid") else "🔴 منفّذ (بدون دفع)"
-    if order.get("status") == "canceled":
-        return "⚫️ مُلغى"
-    return "⚪️ غير معروف"
+def order_summary(order_id: int, order: dict) -> str:
+    amount, extra, net = calc_extra_and_net(order.get("amount", 0) or 0)
+    paid = "✅ مدفوع" if order.get("paid") else "⏳ غير مدفوع"
+    return (
+        f"📩 ملخص الطلب\n"
+        f"رقم الطلب: #{order_id}\n"
+        f"👤 الاسم: {order.get('name','-')}\n"
+        f"📱 الرقم: {order.get('phone','-')}\n"
+        f"💰 المبلغ: {amount}\n"
+        f"➕ الزيادة: {extra}\n"
+        f"💵 الصافي: {net}\n"
+        f"💳 حالة الدفع: {paid}"
+    )
 
-def order_header(order_id: int, order: Dict[str, Any]) -> str:
-    return f"رقم الطلب: #{order_id}"
+def final_report(order_id: int, order: dict) -> str:
+    amount, extra, net = calc_extra_and_net(order.get("amount", 0) or 0)
+    return (
+        f"📊 التقرير النهائي\n"
+        f"رقم الطلب: #{order_id}\n"
+        f"👤 الاسم: {order.get('name','-')}\n"
+        f"📱 الرقم: {order.get('phone','-')}\n"
+        f"💰 المبلغ: {amount}\n"
+        f"➕ الزيادة: {extra}\n"
+        f"💵 الصافي: {net}\n"
+        f"🔢 رقم العملية: {order.get('transaction_id','-')}\n"
+        f"🧾 آخر نص لإشعار الدفع: {order.get('notify_msg','-')}\n"
+        f"🖼️ آخر صورة/ملف إشعار: {'✅ موجود' if order.get('proof_file_id') else '🚫 لا يوجد'}\n"
+        f"💳 حالة الدفع: {'✅ مدفوع' if order.get('paid') else '⏳ غير مدفوع'}\n"
+        f"📌 الحالة: {order.get('status','pending')}"
+    )
 
-def order_summary(order_id: int, order: Dict[str, Any]) -> str:
-    paid_status = fmt_paid(order.get("paid", False))
-    amount_str = str(order.get("amount", 0))
-    status = badge_status(order)
-    lines = [
-        "📩 ملخص الطلب",
-        order_header(order_id, order),
-        status,
-        "",
-        f"👤 الاسم: {order.get('name', '-')}",
-        f"📱 الرقم: {order.get('phone', '-')}",
-        f"🟡 الشبكة: {order.get('network', '-')}",
-        f"💰 المبلغ: {amount_str}",
-        f"💳 حالة الدفع: {paid_status}",
-    ]
-    if order.get("notify_msg"):
-        lines.append(f"📥 إشعار الدفع: موجود")
-    if order.get("transaction_id"):
-        lines.append(f"🔢 رقم العملية: {order.get('transaction_id')}")
-    return "\n".join(lines)
-
-def final_report_text(order_id: int, order: Dict[str, Any]) -> str:
-    paid = order.get("paid", False)
-    amount, extra, net_amount = calc_extra_and_net(str(order.get("amount", 0)))
-    paid_status = fmt_paid(paid)
-    status = badge_status(order)
-    notify_line = "🚫 لا يوجد"
-    if order.get("notify_msg"):
-        notify_line = "✅ أُرسل"
-
-    lines = [
-        "📊 التقرير النهائي",
-        order_header(order_id, order),
-        status,
-        "",
-        f"👤 الاسم: {order.get('name', '-')}",
-        f"📱 الرقم: {order.get('phone', '-')}",
-        f"🟡 الشبكة: {order.get('network', '-')}",
-        f"💰 المبلغ المطلوب: {amount}",
-        f"➕ الزيادة: {extra}",
-        f"💵 الصافي المطلوب: {net_amount}",
-        f"💳 حالة الدفع: {paid_status}",
-        f"📥 إشعار الدفع: {notify_line}",
-    ]
-    if order.get("transaction_id"):
-        lines.append(f"🔢 رقم العملية: {order['transaction_id']}")
-    if order.get("notify_msg"):
-        lines.append("\n🧾 نص الإشعار:")
-        lines.append(order["notify_msg"])
-    return "\n".join(lines)
-
-def next_order_id() -> int:
-    return next(_order_id_counter)
+def extract_transaction_id(text: str) -> str | None:
+    if not text:
+        return None
+    m = re.search(r"\b(\d{6,})\b", text)
+    return m.group(1) if m else None

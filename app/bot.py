@@ -2,17 +2,14 @@ import os
 import logging
 from dotenv import load_dotenv
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
-from .handlers import start, text_handler, merchant_action
+from .handlers import start, text_handler, merchant_action, proof_handler
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 dotenv_path = os.path.join(BASE_DIR, ".env")
 load_dotenv(dotenv_path=dotenv_path)
 
 def build_app():
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        level=logging.INFO
-    )
+    logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
     token = os.getenv("BOT_TOKEN")
     if not token:
@@ -20,8 +17,14 @@ def build_app():
 
     app = Application.builder().token(token).build()
 
+    # أوامر ونصوص
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+
+    # وسائط من الزبون
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, proof_handler))
+
+    # أزرار
     app.add_handler(CallbackQueryHandler(merchant_action))
 
     return app
