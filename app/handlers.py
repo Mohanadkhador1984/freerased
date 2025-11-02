@@ -17,6 +17,9 @@ def merchant_keyboard(order_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🧾 إدخال إشعار الدفع", callback_data=f"ask_notify:{order_id}")]
     ])
 
+def new_order_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔄 طلب جديد", callback_data="new_order")]])
+
 # بدء البوت: عرض باركود شام كاش ورقم التاجر بحقل مستقل
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
@@ -178,8 +181,18 @@ async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     parts = query.data.split(":")
     action = parts[0]
-    order_id = int(parts[1])
-    order = get_order(order_id)
+    order_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+
+    # الزبون: بدء طلب جديد من الزر
+    if action == "new_order":
+        context.user_data.clear()
+        await query.message.reply_text(
+            f"🔑 كود شام كاش للتاجر:\n{MERCHANT_QR}\n📱 رقم التاجر: {MERCHANT_PHONE}\n\n"
+            "أرسل رقم الموبايل الذي تريد شحنه بصيغة 09xxxxxxxx."
+        )
+        return
+
+    order = get_order(order_id) if order_id else None
 
     if action == "send_merchant":
         if not order:
@@ -195,7 +208,11 @@ async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         update_order(order_id, merchant_msg_id=msg.message_id)
 
-        await query.message.reply_text("📤 تم إرسال الطلب للتاجر.")
+        # رسالة للزبون مع زر "طلب جديد"
+        await query.message.reply_text(
+            "📤 تم إرسال الطلب للتاجر.\nيمكنك البدء بطلب جديد:",
+            reply_markup=new_order_keyboard()
+        )
         return
 
     if not order:
@@ -205,7 +222,6 @@ async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # التاجر: إدخال رقم العملية أو إشعار الدفع
     if action == "ask_tx":
         MERCHANT_WAIT[MERCHANT_ID] = {"order_id": order_id, "mode": "tx"}
-        # رسالة إرشادية تُضاف للمؤقتات (تحذف لاحقًا)
         msg = await query.message.reply_text(f"🔢 أرسل رقم العملية لطلب #{order_id} كرسالة نصية هنا.")
         MERCHANT_TEMP_MSGS.setdefault(order_id, []).append(msg.message_id)
         return
@@ -242,9 +258,9 @@ async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         MERCHANT_TEMP_MSGS.pop(order_id, None)
         MERCHANT_WAIT.pop(MERCHANT_ID, None)
 
-        # إشعار الزبون + التقرير النهائي المتضمّن كل ما أرسله الطرفان
+        # إشعار الزبون + التقرير النهائي + زر "طلب جديد"
         await context.bot.send_message(chat_id=order["user_id"], text="✅ تم التسليم، شكرًا لك!")
-        await context.bot.send_message(chat_id=order["user_id"], text=report)
+        await context.bot.send_message(chat_id=order["user_id"], text=report, reply_markup=new_order_keyboard())
         return
 
     # إلغاء الطلب
@@ -265,7 +281,7 @@ async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         MERCHANT_TEMP_MSGS.pop(order_id, None)
         MERCHANT_WAIT.pop(MERCHANT_ID, None)
 
-        # إشعار الزبون بالإلغاء
-        await context.bot.send_message(chat_id=order["user_id"], text="❌ تم إلغاء طلبك.")
+        # إشعار الزبون بالإلغاء + زر "طلب جديد"
+        await context.bot.send_message(chat_id=order["user_id"], text="❌ تم إلغاء طلبك.", reply_markup=new_order_keyboard())
         await query.message.reply_text(f"❌ تم إلغاء الطلب #{order_id}")
         return

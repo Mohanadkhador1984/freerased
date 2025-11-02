@@ -16,8 +16,8 @@ def init_db():
         paid INTEGER DEFAULT 0,
         status TEXT DEFAULT 'pending',  -- pending | done | canceled
         transaction_id TEXT,
-        notify_msg TEXT,                -- نص إشعار الدفع (أحدث قيمة: من الزبون أو التاجر)
-        proof_file_id TEXT,             -- صورة/ملف إشعار الدفع (أحدث قيمة)
+        notify_msg TEXT,                -- آخر نص إشعار الدفع (من الزبون أو التاجر)
+        proof_file_id TEXT,             -- آخر صورة/ملف إشعار الدفع
         merchant_msg_id INTEGER,        -- الرسالة الرئيسية لدى التاجر (ذات الأزرار)
         final_msg_id INTEGER,           -- التقرير النهائي لدى التاجر
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
