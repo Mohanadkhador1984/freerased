@@ -1,275 +1,161 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from .database import add_order, update_order, get_order
-from .utils import is_valid_phone, order_summary, final_report, extract_transaction_id
-from .config import MERCHANT_ID, MERCHANT_PHONE, MERCHANT_QR
+from .utils import generate_activation_code, final_report
+from .config import MERCHANT_ID
 
-# رسائل التاجر المؤقتة لكل طلب لحذفها لاحقًا
-MERCHANT_TEMP_MSGS: dict[int, list[int]] = {}
-# انتظار إدخالات التاجر (رقم العملية/إشعار الدفع)
-MERCHANT_WAIT: dict[int, dict] = {}
-
-def merchant_keyboard(order_id: int) -> InlineKeyboardMarkup:
+def team_keyboard(order_id: int):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ تأكيد الدفع", callback_data=f"confirm:{order_id}")],
-        [InlineKeyboardButton("❌ إلغاء الطلب", callback_data=f"cancel:{order_id}")],
-        [InlineKeyboardButton("🔢 إدخال رقم العملية", callback_data=f"ask_tx:{order_id}")],
-        [InlineKeyboardButton("🧾 إدخال إشعار الدفع", callback_data=f"ask_notify:{order_id}")]
+        [InlineKeyboardButton("🔑 إرسال كود التفعيل", callback_data=f"activate:{order_id}")],
+        [InlineKeyboardButton("❌ إلغاء الطلب", callback_data=f"cancel:{order_id}")]
     ])
 
-def new_order_keyboard() -> InlineKeyboardMarkup:
+def new_order_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔄 طلب جديد", callback_data="new_order")]])
+
+def send_team_keyboard(order_id: int):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📤 إرسال لفريق العمل", callback_data=f"send_team:{order_id}")]
+    ])
 
 # بدء البوت
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text(
-        f"🔑 كود شام كاش للتاجر:\n{MERCHANT_QR}\n📱 رقم التاجر: {MERCHANT_PHONE}\n\n"
-        "أرسل رقم الموبايل الذي تريد شحنه بصيغة 09xxxxxxxx."
+    await update.message.reply_photo(
+        photo=open("qr.png", "rb"),
+        caption=(
+            "💳 تعليمات الدفع:\n"
+            "1️⃣ امسح الباركود أعلاه أو أرسل المبلغ إلى الباركود: ce95cda303cc0c382736307089e2ddeb\n"
+            "2️⃣ بعد الدفع، أرسل اسم التطبيق الذي تريد شراءه:\n"
+            "   - MQBank\n"
+            "   - Bacly"
+        )
     )
 
-# تدفق الزبون
+# استقبال النصوص
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text.strip()
 
-    # إدخالات التاجر في وضع الانتظار
-    if user.id == MERCHANT_ID and user.id in MERCHANT_WAIT:
-        wait = MERCHANT_WAIT[user.id]
-        order_id = wait.get("order_id")
-        mode = wait.get("mode")
-        order = get_order(order_id)
-        if not order:
-            await update.message.reply_text("❌ الطلب غير موجود.")
-            MERCHANT_WAIT.pop(user.id, None)
-            return
-
-        if mode == "tx":
-            update_order(order_id, transaction_id=text)
-            await context.bot.send_message(
-                chat_id=order["user_id"],
-                text=f"🔢 رقم العملية من التاجر لطلب #{order_id}: {text}"
-            )
-            try: await update.message.delete()
-            except: pass
-
-        elif mode == "notify":
-            update_order(order_id, notify_msg=text)
-            await context.bot.send_message(
-                chat_id=order["user_id"],
-                text=f"🧾 إشعار الدفع من التاجر لطلب #{order_id}:\n{text}"
-            )
-            try: await update.message.delete()
-            except: pass
-
-        MERCHANT_WAIT.pop(user.id, None)
+    # الخطوة 1: اسم التطبيق
+    if "app_name" not in context.user_data:
+        context.user_data["app_name"] = text
+        await update.message.reply_text("📱 أرسل الآن الرقم الخاص بجهازك (32 خانة).")
         return
 
-    # الزبون: رقم الهاتف
-    if "phone" not in context.user_data:
-        if not is_valid_phone(text):
-            await update.message.reply_text("⚠️ أدخل رقم صحيح بصيغة 09xxxxxxxx.")
-            return
-        context.user_data["phone"] = text
-        await update.message.reply_text("💰 أرسل المبلغ المطلوب (أرقام فقط).")
+    # الخطوة 2: Device ID
+    if "device_id" not in context.user_data:
+        context.user_data["device_id"] = text
+        await update.message.reply_text("📸 أرسل الآن صورة أو نص إشعار الدفع.")
         return
 
-    # الزبون: المبلغ
-    if "amount" not in context.user_data:
-        if not text.isdigit():
-            await update.message.reply_text("⚠️ أرسل رقمًا صحيحًا للمبلغ.")
-            return
-        amount = int(text)
-        if amount <= 0:
-            await update.message.reply_text("⚠️ المبلغ يجب أن يكون أكبر من صفر.")
-            return
-        context.user_data["amount"] = amount
-
-        order_id = add_order(user.id, user.first_name or "-", context.user_data["phone"], amount)
+    # الخطوة 3: إشعار الدفع كنص
+    if "notify_msg" not in context.user_data:
+        context.user_data["notify_msg"] = text
+        order_id = add_order(user.id, context.user_data["app_name"], text, context.user_data["device_id"])
         context.user_data["order_id"] = order_id
-        order = get_order(order_id)
 
-        summary = order_summary(order_id, order)
         await update.message.reply_text(
-            f"{summary}\n\n"
-            f"📌 ادفع عبر شام كاش:\n🔑 الكود: {MERCHANT_QR}\n📱 التاجر: {MERCHANT_PHONE}\n\n"
-            f"ثم أرسل إشعار الدفع كنص أو صورة."
+            "✅ تم استلام إشعار الدفع.\n"
+            "اضغط الزر لإرسال الطلب لفريق العمل.",
+            reply_markup=send_team_keyboard(order_id)
         )
         return
 
-    # الزبون: إشعار الدفع كنص
-    order_id = context.user_data.get("order_id")
-    if not order_id:
-        await update.message.reply_text("⚠️ لا توجد جلسة طلب نشطة. اضغط /start أو زر طلب جديد.")
-        return
-
-    tx = extract_transaction_id(text)
-    update_order(order_id, notify_msg=text)
-    if tx: update_order(order_id, transaction_id=tx)
-
-    # نسخة للتاجر
-    m = await context.bot.send_message(
-        chat_id=MERCHANT_ID,
-        text=f"🧾 إشعار دفع من الزبون - طلب #{order_id}:\n{text}"
-    )
-    MERCHANT_TEMP_MSGS.setdefault(order_id, []).append(m.message_id)
-
-    # زر إرسال للتاجر (مرة واحدة فقط)
-    send_btn = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 إرسال للتاجر", callback_data=f"send_merchant:{order_id}")]
-    ])
-    await update.message.reply_text("✅ تم استلام إشعار الدفع.", reply_markup=send_btn)
-
-# الزبون: صورة/ملف إشعار الدفع
+# استقبال صورة إشعار الدفع
 async def proof_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
     order_id = context.user_data.get("order_id")
-    if not order_id:
-        await update.message.reply_text("⚠️ لا توجد جلسة طلب نشطة. اضغط /start أو زر طلب جديد.")
-        return
 
-    file_id = None
-    if update.message.photo:
-        file_id = update.message.photo[-1].file_id
-    elif update.message.document:
-        file_id = update.message.document.file_id
-    else:
-        await update.message.reply_text("⚠️ أرسل صورة أو ملف إشعار الدفع.")
-        return
+    file_id = update.message.photo[-1].file_id if update.message.photo else update.message.document.file_id
+
+    if not order_id:
+        order_id = add_order(user.id, context.user_data.get("app_name","-"), "صورة إشعار", context.user_data.get("device_id","-"))
+        context.user_data["order_id"] = order_id
 
     update_order(order_id, proof_file_id=file_id)
 
-    # نسخة للتاجر
-    p = await context.bot.send_photo(
-        chat_id=MERCHANT_ID,
-        photo=file_id,
-        caption=f"🧾 صورة/ملف إشعار دفع من الزبون - طلب #{order_id}"
+    await update.message.reply_text(
+        "✅ تم استلام صورة إشعار الدفع.\n"
+        "اضغط الزر لإرسال الطلب لفريق العمل.",
+        reply_markup=send_team_keyboard(order_id)
     )
-    MERCHANT_TEMP_MSGS.setdefault(order_id, []).append(p.message_id)
 
-    # زر إرسال للتاجر (مرة واحدة فقط)
-    send_btn = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 إرسال للتاجر", callback_data=f"send_merchant:{order_id}")]
-    ])
-    await update.message.reply_text("✅ تم استلام صورة/ملف إشعار الدفع.", reply_markup=send_btn)
-
-# الأزرار
-async def merchant_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# أزرار فريق العمل
+async def team_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     parts = query.data.split(":")
     action = parts[0]
-    order_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+    order_id = int(parts[1]) if len(parts) > 1 else None
 
-    # زر طلب جديد
     if action == "new_order":
         context.user_data.clear()
         await query.message.reply_text(
-            f"🔑 كود شام كاش للتاجر:\n{MERCHANT_QR}\n📱 رقم التاجر: {MERCHANT_PHONE}\n\n"
-            "أرسل رقم الموبايل الذي تريد شحنه بصيغة 09xxxxxxxx."
+            "📱 أرسل اسم التطبيق الذي تريد شراءه:\n- MQBank\n- Bacly"
         )
         return
 
     order = get_order(order_id) if order_id else None
+    if not order:
+        await query.message.reply_text("❌ الطلب غير موجود.")
+        return
 
-    # الزبون: إرسال الطلب للتاجر
-    if action == "send_merchant":
-        if not order:
-            await query.message.reply_text("❌ الطلب غير موجود.")
-            return
-
-        # إرسال للتاجر
-        summary = order_summary(order_id, order)
+    # إرسال الطلب لفريق العمل
+    if action == "send_team":
         msg = await context.bot.send_message(
             chat_id=MERCHANT_ID,
-            text=f"🟦 طلب جديد\n{summary}\n\n🔑 كود شام كاش: {MERCHANT_QR}\n📱 {MERCHANT_PHONE}",
-            reply_markup=merchant_keyboard(order_id)
+            text=(
+                f"🟦 طلب جديد #{order_id}\n"
+                f"📱 التطبيق: {order['app_name']}\n"
+                f"🔢 رقم الجهاز: {order['device_id']}\n"
+                f"🧾 إشعار: {order['notify_msg'] or '-'}"
+            ),
+            reply_markup=team_keyboard(order_id)
         )
-        update_order(order_id, merchant_msg_id=msg.message_id)
+        if order.get("proof_file_id"):
+            await context.bot.send_photo(
+                chat_id=MERCHANT_ID,
+                photo=order["proof_file_id"],
+                caption=f"🖼️ صورة إشعار الدفع لطلب #{order_id}"
+            )
 
-        # إزالة زر الإرسال من رسالة الزبون
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except: pass
+        update_order(order_id, team_msg_id=msg.message_id)
 
-        # تقرير نهائي للزبون + زر طلب جديد
-        report = final_report(order_id, order)
-        await context.bot.send_message(
-            chat_id=order["user_id"],
-            text=f"📤 تم إرسال طلبك للتاجر.\n\n{report}",
-            reply_markup=new_order_keyboard()
-        )
-
-        # مسح بيانات الجلسة
+        await query.message.reply_text("📤 تم إرسال طلبك لفريق العمل ✅", reply_markup=new_order_keyboard())
         context.user_data.clear()
         return
 
-    # باقي إجراءات التاجر (ask_tx
-        # باقي إجراءات التاجر (ask_tx, ask_notify, confirm, cancel)
+    # فريق العمل: إرسال كود التفعيل
+    if action == "activate":
+        code = generate_activation_code(order["device_id"])
+        update_order(order_id, activation_code=code, status="done")
 
-    # التاجر: إدخال رقم العملية
-    if action == "ask_tx":
-        MERCHANT_WAIT[MERCHANT_ID] = {"order_id": order_id, "mode": "tx"}
-        msg = await query.message.reply_text(f"🔢 أرسل رقم العملية لطلب #{order_id} كرسالة نصية هنا.")
-        MERCHANT_TEMP_MSGS.setdefault(order_id, []).append(msg.message_id)
-        return
+        # إرسال الكود للزبون
+        await context.bot.send_message(
+            chat_id=order["user_id"],
+            text=f"🔑 كود التفعيل الخاص بجهازك: {code}"
+        )
 
-    # التاجر: إدخال إشعار الدفع
-    if action == "ask_notify":
-        MERCHANT_WAIT[MERCHANT_ID] = {"order_id": order_id, "mode": "notify"}
-        msg = await query.message.reply_text(f"🧾 أرسل إشعار الدفع (نص أو صورة/ملف) لطلب #{order_id} هنا.")
-        MERCHANT_TEMP_MSGS.setdefault(order_id, []).append(msg.message_id)
-        return
-
-    # التاجر: تأكيد التنفيذ
-    if action == "confirm":
-        update_order(order_id, paid=1, status="done")
-        order = get_order(order_id)
-        report = final_report(order_id, order)
-
-        # إرسال التقرير النهائي للتاجر
-        final_msg = await context.bot.send_message(chat_id=MERCHANT_ID, text=report)
-        update_order(order_id, final_msg_id=final_msg.message_id)
-
-        # حذف الرسالة الرئيسية لدى التاجر
-        if order.get("merchant_msg_id"):
-            try:
-                await context.bot.delete_message(chat_id=MERCHANT_ID, message_id=order["merchant_msg_id"])
-            except Exception:
-                pass
-
-        # حذف كل الرسائل المؤقتة
-        for mid in MERCHANT_TEMP_MSGS.get(order_id, []):
-            try:
-                await context.bot.delete_message(chat_id=MERCHANT_ID, message_id=mid)
-            except Exception:
-                pass
-        MERCHANT_TEMP_MSGS.pop(order_id, None)
-        MERCHANT_WAIT.pop(MERCHANT_ID, None)
-
-        # إشعار الزبون + التقرير النهائي + زر "طلب جديد"
-        await context.bot.send_message(chat_id=order["user_id"], text="✅ تم التسليم، شكرًا لك!")
+        # تقرير نهائي للطرفين
+        report = final_report(order_id, get_order(order_id))
+        await context.bot.send_message(chat_id=MERCHANT_ID, text=report)
         await context.bot.send_message(chat_id=order["user_id"], text=report, reply_markup=new_order_keyboard())
+
+        # حذف رسائل الطلب المؤقتة
+        if order.get("team_msg_id"):
+            try:
+                await context.bot.delete_message(chat_id=MERCHANT_ID, message_id=order["team_msg_id"])
+            except:
+                pass
+        try:
+            await query.message.delete()
+        except:
+            pass
         return
 
-    # التاجر: إلغاء الطلب
+    # فريق العمل: إلغاء الطلب
     if action == "cancel":
         update_order(order_id, status="canceled")
-
-        # حذف الرسالة الرئيسية والرسائل المؤقتة لدى التاجر
-        if order.get("merchant_msg_id"):
-            try:
-                await context.bot.delete_message(chat_id=MERCHANT_ID, message_id=order["merchant_msg_id"])
-            except Exception:
-                pass
-        for mid in MERCHANT_TEMP_MSGS.get(order_id, []):
-            try:
-                await context.bot.delete_message(chat_id=MERCHANT_ID, message_id=mid)
-            except Exception:
-                pass
-        MERCHANT_TEMP_MSGS.pop(order_id, None)
-        MERCHANT_WAIT.pop(MERCHANT_ID, None)
-
-        # إشعار الزبون بالإلغاء + زر "طلب جديد"
         await context.bot.send_message(chat_id=order["user_id"], text="❌ تم إلغاء طلبك.", reply_markup=new_order_keyboard())
-        await query.message.reply_text(f"❌ تم إلغاء الطلب #{order_id}")
         return

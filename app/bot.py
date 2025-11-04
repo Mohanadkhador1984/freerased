@@ -1,30 +1,33 @@
-import os
 import logging
-from dotenv import load_dotenv
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
-from .handlers import start, text_handler, merchant_action, proof_handler
+from .handlers import start, text_handler, team_action, proof_handler
+from .database import init_db
+from .config import BOT_TOKEN
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-dotenv_path = os.path.join(BASE_DIR, ".env")
-load_dotenv(dotenv_path=dotenv_path)
+# تفعيل نظام اللوج
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-def build_app():
-    logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
+def build_app() -> Application:
+    # تهيئة قاعدة البيانات
+    init_db()
 
-    token = os.getenv("BOT_TOKEN")
-    if not token:
-        raise RuntimeError("❌ BOT_TOKEN غير موجود في ملف .env")
+    # إنشاء التطبيق
+    app = Application.builder().token(BOT_TOKEN).build()
 
-    app = Application.builder().token(token).build()
-
-    # أوامر ونصوص
+    # الأوامر
     app.add_handler(CommandHandler("start", start))
+
+    # استقبال النصوص (Device ID, إشعار الدفع, رقم العملية)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # وسائط من الزبون
+    # استقبال الصور/الملفات (إشعار الدفع)
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, proof_handler))
 
-    # أزرار
-    app.add_handler(CallbackQueryHandler(merchant_action))
+    # أزرار فريق العمل
+    app.add_handler(CallbackQueryHandler(team_action))
 
     return app
