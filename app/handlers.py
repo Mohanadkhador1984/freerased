@@ -26,9 +26,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption=(
             "💳 تعليمات الدفع:\n"
             "1️⃣ امسح الباركود أعلاه أو أرسل المبلغ إلى الباركود: ce95cda303cc0c382736307089e2ddeb\n"
-            "2️⃣ بعد الدفع، أرسل اسم التطبيق الذي تريد شراءه:\n"
-            "   - MQBank\n"
-            "   - Bacly"
+            "2️⃣ بعد الدفع، أرسل الرقم الخاص بجهازك (32 خانة)."
         )
     )
 
@@ -37,22 +35,16 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text.strip()
 
-    # الخطوة 1: اسم التطبيق
-    if "app_name" not in context.user_data:
-        context.user_data["app_name"] = text
-        await update.message.reply_text("📱 أرسل الآن الرقم الخاص بجهازك (32 خانة).")
-        return
-
-    # الخطوة 2: Device ID
+    # الخطوة 1: Device ID
     if "device_id" not in context.user_data:
         context.user_data["device_id"] = text
         await update.message.reply_text("📸 أرسل الآن صورة أو نص إشعار الدفع.")
         return
 
-    # الخطوة 3: إشعار الدفع كنص
+    # الخطوة 2: إشعار الدفع كنص
     if "notify_msg" not in context.user_data:
         context.user_data["notify_msg"] = text
-        order_id = add_order(user.id, context.user_data["app_name"], text, context.user_data["device_id"])
+        order_id = add_order(user.id, context.user_data["device_id"], text)
         context.user_data["order_id"] = order_id
 
         await update.message.reply_text(
@@ -70,7 +62,7 @@ async def proof_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_id = update.message.photo[-1].file_id if update.message.photo else update.message.document.file_id
 
     if not order_id:
-        order_id = add_order(user.id, context.user_data.get("app_name","-"), "صورة إشعار", context.user_data.get("device_id","-"))
+        order_id = add_order(user.id, context.user_data.get("device_id","-"), "صورة إشعار")
         context.user_data["order_id"] = order_id
 
     update_order(order_id, proof_file_id=file_id)
@@ -91,9 +83,7 @@ async def team_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "new_order":
         context.user_data.clear()
-        await query.message.reply_text(
-            "📱 أرسل اسم التطبيق الذي تريد شراءه:\n- MQBank\n- Bacly"
-        )
+        await query.message.reply_text("📱 أرسل رقم جهازك (32 خانة).")
         return
 
     order = get_order(order_id) if order_id else None
@@ -107,7 +97,6 @@ async def team_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=MERCHANT_ID,
             text=(
                 f"🟦 طلب جديد #{order_id}\n"
-                f"📱 التطبيق: {order['app_name']}\n"
                 f"🔢 رقم الجهاز: {order['device_id']}\n"
                 f"🧾 إشعار: {order['notify_msg'] or '-'}"
             ),

@@ -10,7 +10,6 @@ def init_db():
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
-            app_name TEXT,
             device_id TEXT,
             notify_msg TEXT,
             proof_file_id TEXT,
@@ -23,12 +22,12 @@ def init_db():
     conn.commit()
     conn.close()
 
-def add_order(user_id: int, app_name: str, notify_msg: str = None, device_id: str = None) -> int:
+def add_order(user_id: int, device_id: str, notify_msg: str = None) -> int:
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO orders (user_id, app_name, device_id, notify_msg, status) VALUES (?, ?, ?, ?, 'pending')",
-        (user_id, app_name, device_id, notify_msg)
+        "INSERT INTO orders (user_id, device_id, notify_msg, status) VALUES (?, ?, ?, 'pending')",
+        (user_id, device_id, notify_msg)
     )
     conn.commit()
     oid = cur.lastrowid
@@ -36,7 +35,6 @@ def add_order(user_id: int, app_name: str, notify_msg: str = None, device_id: st
     return oid
 
 def update_order(order_id: int, **kwargs):
-    """تحديث أي حقل في الطلب"""
     if not kwargs:
         return
     conn = sqlite3.connect(DB_PATH)
@@ -52,12 +50,12 @@ def get_order(order_id: int):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("""
-        SELECT id,user_id,app_name,device_id,notify_msg,proof_file_id,activation_code,status,team_msg_id,created_at
+        SELECT id,user_id,device_id,notify_msg,proof_file_id,activation_code,status,team_msg_id,created_at
         FROM orders WHERE id=?
     """, (order_id,))
     row = cur.fetchone()
     conn.close()
     if not row:
         return None
-    keys = ["id","user_id","app_name","device_id","notify_msg","proof_file_id","activation_code","status","team_msg_id","created_at"]
+    keys = ["id","user_id","device_id","notify_msg","proof_file_id","activation_code","status","team_msg_id","created_at"]
     return dict(zip(keys, row))

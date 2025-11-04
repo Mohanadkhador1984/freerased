@@ -8,7 +8,6 @@ def final_report(order_id: int, order: dict) -> str:
     return (
         f"📊 التقرير النهائي\n"
         f"رقم الطلب: #{order_id}\n"
-        f"📱 التطبيق: {order.get('app_name','-')}\n"
         f"🔢 رقم الجهاز (32 خانة): {order.get('device_id','-')}\n"
         f"🧾 إشعار الدفع: {order.get('notify_msg','-')}\n"
         f"🖼️ صورة إشعار: {'✅ موجود' if order.get('proof_file_id') else '🚫 لا يوجد'}\n"
