@@ -6,6 +6,7 @@ DB_PATH = Path("bot.db")
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
+    # جدول الطلبات
     cur.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -19,8 +20,30 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # جدول الزوار
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS visitors (
+            user_id INTEGER PRIMARY KEY,
+            first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.commit()
     conn.close()
+
+def add_visitor(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("INSERT OR IGNORE INTO visitors (user_id) VALUES (?)", (user_id,))
+    conn.commit()
+    conn.close()
+
+def count_visitors() -> int:
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM visitors")
+    count = cur.fetchone()[0]
+    conn.close()
+    return count
 
 def add_order(user_id: int, device_id: str, notify_msg: str = None) -> int:
     conn = sqlite3.connect(DB_PATH)

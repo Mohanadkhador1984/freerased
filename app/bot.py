@@ -1,6 +1,6 @@
 import logging
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
-from .handlers import start, text_handler, team_action, proof_handler
+from .handlers import start, text_handler, team_action, proof_handler, stats   # أضفنا stats هنا
 from .database import init_db
 from .config import BOT_TOKEN
 
@@ -20,6 +20,7 @@ def build_app() -> Application:
 
     # الأوامر
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stats", stats))   # أمر الإحصائيات الجديد
 
     # استقبال النصوص (Device ID, إشعار الدفع, رقم العملية)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
