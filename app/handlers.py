@@ -24,6 +24,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     context.user_data.clear()
 
+    # إشعار فوري للزبون عند الضغط على Start
+    await update.message.reply_text("⏳ جارٍ تجهيز الخدمة... يرجى الانتظار لحظات.")
+
     # تسجيل الزائر
     add_visitor(user.id)
     total = count_visitors()
@@ -38,7 +41,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     )
 
-    # رسالة التعليمات للزائر (بدون أي ذكر للعدد أو ترتيبه)
+    # رسالة التعليمات للزائر
     await update.message.reply_photo(
         photo=open("qr.png", "rb"),
         caption=(
@@ -61,10 +64,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "▪️ الصقه مباشرةً هنا في الدردشة.\n\n"
             "✍️ مثال على رقم الجهاز:\n"
             "`8247n312-212n-8db6-9c88-64880ec7e4b`\n\n"
-            "⬇️ الصق رقم جهازك المنسوخ من التطبيق في الدردشة التالية لبدء عملية التفعيل ⬇️"
+            "⬇️ الصق رقم جهازك المنسوخ مسبقاً من التطبيق في الدردشة التالية لبدء عملية التفعيل ⬇️"
         )
     )
-
 
 
 # أمر إحصائيات الزوار (للتاجر فقط)
@@ -128,7 +130,7 @@ async def team_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "new_order":
         context.user_data.clear()
-        await query.message.reply_text("📱 أرسل رقم جهازك (32 خانة).")
+        await query.message.reply_text("📱 أدخل رقم جهازك المنسوخ مسبقا من خلال الضغط على زر نسخ الرقم الخاص بجهازي من داخل التطبيق.")
         return
 
     order = get_order(order_id) if order_id else None
