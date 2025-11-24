@@ -79,3 +79,8 @@ if __name__ == "__main__":
             webhook_url=webhook_url,
             allowed_updates=["message", "callback_query"],
         )
+
+
+        
+
+# (venv) G:\All_my_project\rasidk-fawri>python main.py
