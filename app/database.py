@@ -27,6 +27,14 @@ def init_db():
             first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # جدول المشتركين في الإشعارات
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS subscribers (
+            user_id INTEGER PRIMARY KEY,
+            first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_broadcast TIMESTAMP
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -82,3 +90,47 @@ def get_order(order_id: int):
         return None
     keys = ["id","user_id","device_id","notify_msg","proof_file_id","activation_code","status","team_msg_id","created_at"]
     return dict(zip(keys, row))
+
+# إدارة المشتركين (للإرسال الجماعي)
+def add_subscriber(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("INSERT OR IGNORE INTO subscribers (user_id) VALUES (?)", (user_id,))
+    conn.commit()
+    conn.close()
+
+def get_subscribers(limit: int = None, offset: int = 0):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    q = "SELECT user_id FROM subscribers ORDER BY first_seen ASC"
+    if limit is not None:
+        q += " LIMIT ? OFFSET ?"
+        cur.execute(q, (limit, offset))
+    else:
+        cur.execute(q)
+    rows = cur.fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+def count_subscribers() -> int:
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM subscribers")
+    count = cur.fetchone()[0]
+    conn.close()
+    return count
+
+def mark_broadcast_sent(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("UPDATE subscribers SET last_broadcast=CURRENT_TIMESTAMP WHERE user_id=?", (user_id,))
+    conn.commit()
+    conn.close()
+
+def remove_subscriber(user_id: int):
+    # يمكن استخدامها لاحقًا إذا رغبت بإلغاء الاشتراك
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM subscribers WHERE user_id=?", (user_id,))
+    conn.commit()
+    conn.close()
