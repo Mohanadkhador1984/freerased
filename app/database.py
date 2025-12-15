@@ -1,7 +1,9 @@
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path("bot.db")
+# استخدم فولدر /data إذا كان موجود (مثلاً عند النقل لاحقًا إلى Fly.io)، وإلا ملف محلي
+DB_PATH = Path("/data/bot.db") if Path("/data").exists() else Path("bot.db")
+
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
